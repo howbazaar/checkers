@@ -49,6 +49,18 @@ type Checker interface {
 	Check(t *testing.T, obtained interface{}, extras ...interface{}) bool
 }
 
+type isNil struct{}
+
+var IsNil Checker = isNil{}
+
+func (isNil) Check(t *testing.T, obtained interface{}, extras ...interface{}) bool {
+	if obtained == nil {
+		return true
+	}
+	t.Error("obtained value is non-nil")
+	return false
+}
+
 type equals struct{}
 
 // Equals checker tests for equality.
@@ -95,5 +107,43 @@ func (equals) Check(t *testing.T, obtained interface{}, extras ...interface{}) b
 		return false
 	}
 	t.Errorf("expected %T value %v, got %v", expected, expected, obtained)
+	return false
+}
+
+type isFalse struct{}
+
+var IsFalse Checker = isFalse{}
+
+func (isFalse) Check(t *testing.T, obtained interface{}, extras ...interface{}) bool {
+	value := reflect.ValueOf(obtained)
+	switch value.Kind() {
+	case reflect.Bool:
+		if !value.Bool() {
+			return true
+		}
+	default:
+		t.Errorf("IsFalse checker expected bool, obtained was type %T", obtained)
+		return false
+	}
+	t.Error("obtained value is true")
+	return false
+}
+
+type isTrue struct{}
+
+var IsTrue Checker = isTrue{}
+
+func (isTrue) Check(t *testing.T, obtained interface{}, extras ...interface{}) bool {
+	value := reflect.ValueOf(obtained)
+	switch value.Kind() {
+	case reflect.Bool:
+		if value.Bool() {
+			return true
+		}
+	default:
+		t.Errorf("IsTrue checker expected bool, obtained was type %T", obtained)
+		return false
+	}
+	t.Error("obtained value is false")
 	return false
 }
