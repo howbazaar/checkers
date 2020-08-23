@@ -4,196 +4,107 @@
 package checkers
 
 import (
+	"fmt"
 	"reflect"
+	"regexp"
 	"testing"
 )
 
-// Suite extends the standard library T.
-type Suite struct {
-	t          *testing.T
-	setupFuncs []func(t *testing.T)
-}
+var testMethodMatch = regexp.MustCompile(`^Test([A-Z]\w*)$`)
 
-func NewSuite(t *testing.T, setupFuncs ...func(*testing.T)) *Suite {
-	return &Suite{
-		t:          t,
-		setupFuncs: setupFuncs,
+// RunSuite runs a collection of methods as subtests.
+func RunSuite(t *testing.T, suite interface{}) {
+	v := reflect.ValueOf(suite)
+	if v.Kind() != reflect.Ptr {
+		t.Fatalf("suite must be passed in with pointer, not value")
 	}
-}
-
-// Run will run the test as a subtest after calling each of the setup functions.
-func (s *Suite) Run(name string, test func(*testing.T)) bool {
-	for _, f := range s.setupFuncs {
-		f(s.t)
+	// Find the *testing.T in the suite, and set it.
+	if ok := setTestingT(t, v); !ok {
+		t.Fatal("unable to initialize the suite *testing.T")
+		return
 	}
-	return s.t.Run(name, test)
-}
-
-// Assert expects to succeed, and if not, causes the test to fail immediately.
-func (s *Suite) Assert(obtained interface{}, checker Checker, extras ...interface{}) {
-	if ok := checker.Check(s.t, obtained, extras...); !ok {
-		s.t.FailNow()
-	}
-}
-
-// Check will mark the test as a failure if the checker fails. The test continues.
-func (s *Suite) Check(obtained interface{}, checker Checker, extras ...interface{}) bool {
-	return checker.Check(s.t, obtained, extras...)
-}
-
-// Checker defines the interface for any specific checker.
-type Checker interface {
-	// Check determins if the obtained value is sufficient.
-	// If the checker requires an expected value, it should be the first
-	// extra value.
-	Check(t *testing.T, obtained interface{}, extras ...interface{}) bool
-}
-
-type isNil struct{}
-
-var IsNil Checker = isNil{}
-
-func (isNil) Check(t *testing.T, obtained interface{}, extras ...interface{}) bool {
-	if obtained == nil {
-		return true
-	}
-	t.Error("obtained value is non-nil")
-	return false
-}
-
-type equals struct{}
-
-// Equals checker tests for equality.
-var Equals Checker = equals{}
-
-// TODO: add describer interface, and pass failing values to the describers
-// in the checkers.
-
-func (equals) Check(t *testing.T, obtained interface{}, extras ...interface{}) bool {
-	if len(extras) == 0 {
-		t.Errorf("missing 'expected' value")
-		return false
-	}
-	expected, extras := extras[0], extras[1:]
-	exValue := reflect.ValueOf(expected)
-	value := reflect.ValueOf(obtained)
-	if value.Kind() != exValue.Kind() {
-		t.Errorf("obtained type %T, does not match expected %T", obtained, expected)
-		return false
-	}
-	switch value.Kind() {
-	case reflect.Bool:
-		if value.Bool() == exValue.Bool() {
-			return true
+	// See if there is a method called SetUpTest, and if there is
+	// save it in the suite.
+	setup := v.MethodByName("SetUpTest")
+	if !setup.IsZero() {
+		fmt.Println("found SetUpTest")
+		// There is a setup method, ensure it takes no args.
+		methodType := setup.Type()
+		if methodType.NumIn() != 0 {
+			fmt.Println("doesn't take no args")
+			t.Fatal("SetUpTest should take no arguments")
 		}
-	case reflect.String:
-		if value.String() == exValue.String() {
-			return true
+	}
+
+	testMethods := findTestMethods(v)
+
+	for _, method := range testMethods {
+		// We know that the method name starts with Test,
+		// so remove that for the subtest name.
+		short := method.Name[4:]
+		testFunc := v.MethodByName(method.Name)
+		t.Run(short, func(*testing.T) {
+			if !setup.IsZero() {
+				setup.Call(nil)
+			}
+			funcType := testFunc.Type()
+			if count := funcType.NumIn(); count != 0 {
+				t.Fatalf("Test method %q takes %d args, should take none", method.Name, count)
+			}
+			if count := funcType.NumOut(); count != 0 {
+				t.Fatalf("Test method %q returns %d values, should return none", method.Name, count)
+			}
+			testFunc.Call(nil)
+		})
+	}
+}
+
+func findTestMethods(v reflect.Value) []reflect.Method {
+	result := []reflect.Method{}
+
+	t := v.Type()
+	numMethods := t.NumMethod()
+	fmt.Printf("suite type %v has %d method\n", t.Name(), numMethods)
+	for i := 0; i < numMethods; i++ {
+		method := t.Method(i)
+		fmt.Printf("looking at method %q\n", method.Name)
+		match := testMethodMatch.FindStringSubmatch(method.Name)
+		if len(match) > 0 {
+			fmt.Printf("it's a match\n")
+			result = append(result, method)
 		}
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		if value.Int() == exValue.Int() {
-			return true
-		}
-	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		if value.Uint() == exValue.Uint() {
-			return true
-		}
-	case reflect.Float32, reflect.Float64:
-		if value.Float() == exValue.Float() {
-			return true
-		}
+	}
+	return result
+}
+
+func setTestingT(t *testing.T, v reflect.Value) bool {
+	switch v.Kind() {
+	case reflect.Ptr:
+		return setTestingT(t, v.Elem())
+	case reflect.Struct:
+		// Falls through to the rest of the function.
 	default:
-		t.Errorf("Equals checker does not support type %T", obtained)
 		return false
 	}
-	t.Errorf("expected %T value %v, got %v", expected, expected, obtained)
-	return false
-}
 
-type deepEquals struct{}
+	tValue := reflect.ValueOf(t)
+	tType := tValue.Type()
+	fieldCount := v.NumField()
 
-// DeepEquals checker tests for equality of complex types.
-var DeepEquals Checker = deepEquals{}
-
-func (deepEquals) Check(t *testing.T, obtained interface{}, extras ...interface{}) bool {
-	if len(extras) == 0 {
-		t.Errorf("missing 'expected' value")
-		return false
-	}
-	expected, extras := extras[0], extras[1:]
-
-	if ok, err := DeepEqual(obtained, expected); !ok {
-		t.Error(err.Error())
-		return false
-	}
-	return true
-}
-
-type isFalse struct{}
-
-var IsFalse Checker = isFalse{}
-
-func (isFalse) Check(t *testing.T, obtained interface{}, extras ...interface{}) bool {
-	value := reflect.ValueOf(obtained)
-	switch value.Kind() {
-	case reflect.Bool:
-		if !value.Bool() {
-			return true
+	for i := 0; i < fieldCount; i++ {
+		field := v.Field(i)
+		if field.Type() == tType {
+			if field.CanSet() {
+				field.Set(tValue)
+				return true
+			}
 		}
-	default:
-		t.Errorf("IsFalse checker expected bool, obtained was type %T", obtained)
-		return false
-	}
-	t.Error("obtained value is true")
-	return false
-}
-
-type isTrue struct{}
-
-var IsTrue Checker = isTrue{}
-
-func (isTrue) Check(t *testing.T, obtained interface{}, extras ...interface{}) bool {
-	value := reflect.ValueOf(obtained)
-	switch value.Kind() {
-	case reflect.Bool:
-		if value.Bool() {
-			return true
+		switch field.Kind() {
+		case reflect.Struct, reflect.Ptr:
+			if ok := setTestingT(t, field); ok {
+				return true
+			}
 		}
-	default:
-		t.Errorf("IsTrue checker expected bool, obtained was type %T", obtained)
-		return false
 	}
-	t.Error("obtained value is false")
 	return false
-}
-
-type hasLen struct{}
-
-var HasLen Checker = hasLen{}
-
-func (hasLen) Check(t *testing.T, obtained interface{}, extras ...interface{}) bool {
-	if len(extras) == 0 {
-		t.Errorf("missing 'expected' value")
-		return false
-	}
-	expected, extras := extras[0], extras[1:]
-	// TODO: deal with panics of wrong types and len of unexpected types
-	size := reflect.ValueOf(expected).Int()
-
-	value := reflect.ValueOf(obtained)
-	var length int
-	switch value.Kind() {
-	case reflect.Array, reflect.Chan, reflect.Map, reflect.Slice, reflect.String:
-		length = value.Len()
-	default:
-		t.Errorf("HasLen checker expected array, channel, map, slice or string, obtained was type %T", obtained)
-		return false
-	}
-
-	if int64(length) != size {
-		t.Errorf("expected length %d, obtained %d", size, length)
-		return false
-	}
-
-	return true
 }
