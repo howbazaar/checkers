@@ -64,13 +64,10 @@ func findTestMethods(v reflect.Value) []reflect.Method {
 
 	t := v.Type()
 	numMethods := t.NumMethod()
-	fmt.Printf("suite type %v has %d method\n", t.Name(), numMethods)
 	for i := 0; i < numMethods; i++ {
 		method := t.Method(i)
-		fmt.Printf("looking at method %q\n", method.Name)
 		match := testMethodMatch.FindStringSubmatch(method.Name)
 		if len(match) > 0 {
-			fmt.Printf("it's a match\n")
 			result = append(result, method)
 		}
 	}

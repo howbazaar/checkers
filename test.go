@@ -12,14 +12,18 @@ type Test struct {
 	*testing.T
 }
 
-// Assert expects to succeed, and if not, causes the test to fail immediately.
-func (t *Test) Assert(obtained interface{}, checker Checker, extras ...interface{}) {
-	if ok := checker.Check(t.T, obtained, extras...); !ok {
-		t.FailNow()
-	}
-}
-
 // Check will mark the test as a failure if the checker fails. The test continues.
 func (t *Test) Check(obtained interface{}, checker Checker, extras ...interface{}) bool {
-	return checker.Check(t.T, obtained, extras...)
+	if err := checker.Check(obtained, extras...); err != nil {
+		t.Error(err.Error())
+		return false
+	}
+	return true
+}
+
+// Assert expects to succeed, and if not, causes the test to fail immediately.
+func (t *Test) Assert(obtained interface{}, checker Checker, extras ...interface{}) {
+	if ok := t.Check(obtained, checker, extras...); !ok {
+		t.FailNow()
+	}
 }
