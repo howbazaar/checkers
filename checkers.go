@@ -45,7 +45,7 @@ func (equals) Check(obtained interface{}, extras ...interface{}) error {
 	exValue := reflect.ValueOf(expected)
 	value := reflect.ValueOf(obtained)
 	if value.Kind() != exValue.Kind() {
-		return fmt.Errorf("obtained type %T, does not match expected %T", obtained, expected)
+		return fmt.Errorf("obtained type %T does not match expected type %T", obtained, expected)
 	}
 	switch value.Kind() {
 	case reflect.Bool:
