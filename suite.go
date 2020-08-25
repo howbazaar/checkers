@@ -26,7 +26,7 @@ func RunSuite(t *testing.T, suite interface{}) {
 	// See if there is a method called SetUpTest, and if there is
 	// save it in the suite.
 	setup := v.MethodByName("SetUpTest")
-	if !setup.IsZero() {
+	if setup.IsValid() {
 		fmt.Println("found SetUpTest")
 		// There is a setup method, ensure it takes no args.
 		methodType := setup.Type()
@@ -44,7 +44,7 @@ func RunSuite(t *testing.T, suite interface{}) {
 		short := method.Name[4:]
 		testFunc := v.MethodByName(method.Name)
 		t.Run(short, func(*testing.T) {
-			if !setup.IsZero() {
+			if setup.IsValid() {
 				setup.Call(nil)
 			}
 			funcType := testFunc.Type()
