@@ -1,6 +1,7 @@
 package checkers_test
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/howbazaar/checkers"
@@ -111,5 +112,125 @@ func TestDeepEquals(t *testing.T) {
 	err = checkers.DeepEquals.Check(obtained, expected)
 	if err.Error() != `mismatch at ["bar"]: unequal; obtained "result"; expected "something"` {
 		t.Errorf("incorrect error response: %v", err)
+	}
+}
+
+type aStringer struct {
+	v string
+}
+
+func (a aStringer) String() string {
+	return a.v
+}
+
+func TestMatches(t *testing.T) {
+	for _, test := range []struct {
+		description string
+		obtained    interface{}
+		expected    interface{}
+		err         string
+	}{
+		{
+			description: "not a string or Stringer",
+			obtained:    42,
+			expected:    "something",
+			err:         "int(42) is neither a string nor has a 'String() string' method",
+		}, {
+			description: "expected not a string",
+			obtained:    "foo",
+			expected:    42,
+			err:         "expected value must be a string containing a regexp pattern",
+		}, {
+			description: "string matches",
+			obtained:    "testing",
+			expected:    "test.*",
+		}, {
+			description: "stringer matches",
+			obtained:    aStringer{"testing"},
+			expected:    "test.*",
+		}, {
+			description: "pattern matches entire string",
+			obtained:    "testing",
+			expected:    "est",
+			err:         `"testing" did not match pattern "^est$"`,
+		}, {
+			description: "pattern handles full definition",
+			obtained:    "testing",
+			expected:    "^test.*$",
+		},
+	} {
+		err := checkers.Matches.Check(test.obtained, test.expected)
+		if err == nil {
+			if test.err != "" {
+				t.Errorf("%s: expected error: %q", test.description, test.err)
+			}
+		} else {
+			if test.err == "" {
+				t.Errorf("%s: unexpected error: %v", test.description, err)
+			} else {
+				if err.Error() != test.err {
+					t.Errorf("%s: error mismatch: \n\tobtained: %q\n\texpected: %q", test.description, err.Error(), test.err)
+				}
+			}
+		}
+	}
+}
+
+func TestPanicMatches(t *testing.T) {
+	for _, test := range []struct {
+		description string
+		obtained    interface{}
+		expected    interface{}
+		err         string
+	}{
+		{
+			description: "not a function",
+			obtained:    42,
+			expected:    "something",
+			err:         "first arg must be a function that takes no args",
+		}, {
+			description: "test arg check",
+			obtained:    func(int) {},
+			expected:    "something",
+			err:         "first arg must be a function that takes no args",
+		}, {
+			description: "expected not a string",
+			obtained:    func() {},
+			expected:    42,
+			err:         "expected value must be a string containing a regexp pattern",
+		}, {
+			description: "no panic",
+			obtained:    func() {},
+			expected:    "oops",
+			err:         "no panic",
+		}, {
+			description: "panic with an int",
+			obtained:    func() { panic(42) },
+			expected:    "oops",
+			err:         "recovered panic value int(42) is not a string nor an error",
+		}, {
+			description: "panic with a string",
+			obtained:    func() { panic("oopsy") },
+			expected:    "oops.*",
+		}, {
+			description: "panic with an error",
+			obtained:    func() { panic(errors.New("oopsy")) },
+			expected:    "oops.*",
+		},
+	} {
+		err := checkers.PanicMatches.Check(test.obtained, test.expected)
+		if err == nil {
+			if test.err != "" {
+				t.Errorf("%s: expected error: %q", test.description, test.err)
+			}
+		} else {
+			if test.err == "" {
+				t.Errorf("%s: unexpected error: %v", test.description, err)
+			} else {
+				if err.Error() != test.err {
+					t.Errorf("%s: error mismatch: \n\tobtained: %q\n\texpected: %q", test.description, err.Error(), test.err)
+				}
+			}
+		}
 	}
 }

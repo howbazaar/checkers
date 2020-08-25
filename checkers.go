@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"regexp"
+	"strings"
 )
 
 // Checker defines the interface for any specific checker.
@@ -158,4 +160,84 @@ func (hasLen) Check(obtained interface{}, extras ...interface{}) error {
 	}
 
 	return nil
+}
+
+type matches struct{}
+
+// Matches checker will use regex to match against a string, or Stringer.
+var Matches Checker = matches{}
+
+func (matches) Check(obtained interface{}, extras ...interface{}) error {
+	if len(extras) == 0 {
+		return errors.New("missing 'expected' value")
+	}
+	expected, extras := extras[0], extras[1:]
+	pattern, ok := expected.(string)
+	if !ok {
+		return errors.New("expected value must be a string containing a regexp pattern")
+	}
+	var value string
+	if s, ok := obtained.(string); ok {
+		value = s
+	} else if s, ok := obtained.(fmt.Stringer); ok {
+		value = s.String()
+	} else {
+		return fmt.Errorf("%T(%#v) is neither a string nor has a 'String() string' method", obtained, obtained)
+	}
+
+	return checkMatch(value, pattern)
+}
+
+func checkMatch(obtained, pattern string) error {
+	if !strings.HasPrefix(pattern, "^") {
+		pattern = "^" + pattern
+	}
+	if !strings.HasSuffix(pattern, "$") {
+		pattern = pattern + "$"
+	}
+	ok, err := regexp.MatchString(pattern, obtained)
+	if err != nil {
+		return fmt.Errorf("unable to compile regexp: %v", err)
+	}
+	if ok {
+		return nil
+	}
+	return fmt.Errorf("%q did not match pattern %q", obtained, pattern)
+}
+
+type panicMatches struct{}
+
+// PanicMatches checker will match an error or string panic result against
+// the specified pattern.
+var PanicMatches Checker = panicMatches{}
+
+func (panicMatches) Check(obtained interface{}, extras ...interface{}) (err error) {
+	if len(extras) == 0 {
+		return errors.New("missing 'expected' value")
+	}
+	expected, extras := extras[0], extras[1:]
+	pattern, ok := expected.(string)
+	if !ok {
+		return errors.New("expected value must be a string containing a regexp pattern")
+	}
+	// First arg must be a function with no args.
+	f := reflect.ValueOf(obtained)
+	if f.Kind() != reflect.Func || f.Type().NumIn() != 0 {
+		return errors.New("first arg must be a function that takes no args")
+	}
+
+	defer func() {
+		v := recover()
+		if v == nil {
+			// No panic, that's bad, but the error already says that.
+		} else if e, ok := v.(error); ok {
+			err = checkMatch(e.Error(), pattern)
+		} else if s, ok := v.(string); ok {
+			err = checkMatch(s, pattern)
+		} else {
+			err = fmt.Errorf("recovered panic value %T(%#v) is not a string nor an error", v, v)
+		}
+	}()
+	f.Call(nil)
+	return errors.New("no panic")
 }
